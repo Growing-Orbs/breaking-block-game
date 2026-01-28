@@ -32,6 +32,7 @@ export default function Home() {
   const [message, setMessage] = useState<string>('');
   const [originX, setOriginX] = useState<number>(canvasSize.width / 2);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [trajectory, setTrajectory] = useState<Pointer[]>([]);
 
   useEffect(() => {
     const saved = getSavedStage();
@@ -45,7 +46,7 @@ export default function Home() {
   useEffect(() => {
     blocksRef.current = blocks;
     renderFrame();
-  }, [blocks, queue, status, aim, message]);
+  }, [blocks, queue, status, aim, message, trajectory, originX, isDragging]);
 
   useEffect(() => {
     saveStage(stage);
@@ -73,7 +74,7 @@ export default function Home() {
     const clampedY = clamp(p.y, originY - 160, originY - 20);
     setOriginX(clampedX);
     setIsDragging(true);
-    updateAimFromDrag({ x: clampedX, y: clampedY });
+    updateAimFromDrag({ x: clampedX, y: clampedY }, clampedX);
   };
 
   const handlePointerMove = (evt: React.PointerEvent<HTMLCanvasElement>) => {
@@ -83,27 +84,34 @@ export default function Home() {
     const originY = canvasSize.height - 20;
     const clampedX = clamp(p.x, 12, canvasSize.width - 12);
     const clampedY = clamp(p.y, originY - 160, originY - 20);
-    setOriginX(clampedX);
     updateAimFromDrag({ x: clampedX, y: clampedY });
   };
 
   const handlePointerUp = () => {
     if (!isDragging) return;
     setIsDragging(false);
+    setTrajectory([]);
     if (!queue.length || status === 'firing') return;
     const nextProjectile = queue[0];
     setQueue((prev) => prev.slice(1));
     startShot(nextProjectile);
   };
 
-  const updateAimFromDrag = (p: Pointer) => {
+  const handlePointerLeave = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    setTrajectory([]);
+  };
+
+  const updateAimFromDrag = (p: Pointer, nextOriginX = originX) => {
     const originY = canvasSize.height - 20;
-    const dx = p.x - originX;
+    const dx = p.x - nextOriginX;
     const dy = p.y - originY;
     // Clamp to upward-ish angles to avoid shooting downward.
     const raw = Math.atan2(dy, dx);
     const clamped = clamp(raw, -Math.PI + 0.2, -0.2);
     setAim(clamped);
+    setTrajectory(simulateTrajectory(clamped, nextOriginX));
   };
 
   const startShot = (proj: ProjectileSpec) => {
@@ -179,7 +187,7 @@ export default function Home() {
     const hit = blocksRef.current.find((b) => circleRect(next, b));
     if (hit) {
       setBlocks((prev) => applyDamage(prev, hit.id, next.damage));
-      next.vy *= -1;
+      next = reflectFromBlock(next, hit);
       next.bounces += 1;
     }
 
@@ -230,18 +238,30 @@ export default function Home() {
     }
 
     const originY = canvasSize.height - 20;
-    ctx.strokeStyle = '#8aa1ff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(originX, originY);
-    ctx.lineTo(originX + Math.cos(aim) * 60, originY + Math.sin(aim) * 60);
-    ctx.stroke();
+    if (isDragging) {
+      ctx.strokeStyle = '#8aa1ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(originX, originY);
+      ctx.lineTo(originX + Math.cos(aim) * 60, originY + Math.sin(aim) * 60);
+      ctx.stroke();
 
-    // 발사 원점 표시
-    ctx.fillStyle = '#6b7cff';
-    ctx.beginPath();
-    ctx.arc(originX, originY, 6, 0, Math.PI * 2);
-    ctx.fill();
+      ctx.fillStyle = '#cfd8ff';
+      trajectory.forEach((point, idx) => {
+        const alpha = 1 - idx / trajectory.length;
+        ctx.globalAlpha = clamp(alpha, 0.2, 1);
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+      // 발사 원점 표시
+      ctx.fillStyle = '#6b7cff';
+      ctx.beginPath();
+      ctx.arc(originX, originY, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   };
 
   return (
@@ -280,6 +300,8 @@ export default function Home() {
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerLeave}
+              onPointerCancel={handlePointerLeave}
               className="h-[440px] w-[340px] rounded-lg border border-[#1f294b] bg-[#0f1428]"
             />
           </div>
@@ -297,6 +319,73 @@ function circleRect(p: ProjectileInstance, b: Block) {
   const dx = p.x - cx;
   const dy = p.y - cy;
   return dx * dx + dy * dy <= p.radius * p.radius;
+}
+
+function reflectFromBlock(p: ProjectileInstance, b: Block): ProjectileInstance {
+  const nearestX = clamp(p.x, b.x, b.x + b.width);
+  const nearestY = clamp(p.y, b.y, b.y + b.height);
+  const dx = p.x - nearestX;
+  const dy = p.y - nearestY;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  const sign = (v: number, fallback: number) => (v === 0 ? fallback : Math.sign(v));
+
+  // Decide whether the collision is primarily horizontal or vertical.
+  if (absDx > absDy) {
+    // Hit on left/right face.
+    const dir = sign(dx, Math.sign(p.vx) || 1);
+    return {
+      ...p,
+      vx: -p.vx,
+      x: dir > 0 ? b.x + b.width + p.radius : b.x - p.radius,
+    };
+  }
+  if (absDy > absDx) {
+    // Hit on top/bottom face.
+    const dir = sign(dy, Math.sign(p.vy) || 1);
+    return {
+      ...p,
+      vy: -p.vy,
+      y: dir > 0 ? b.y + b.height + p.radius : b.y - p.radius,
+    };
+  }
+
+  // Corner case: flip both.
+  return {
+    ...p,
+    vx: -p.vx,
+    vy: -p.vy,
+  };
+}
+
+function simulateTrajectory(angle: number, startX: number): Pointer[] {
+  const speed = 0.35;
+  const radius = 8;
+  const dt = 16; // ms per step for preview sampling
+  let x = startX;
+  let y = canvasSize.height - 24;
+  let vx = Math.cos(angle) * speed;
+  let vy = Math.sin(angle) * speed;
+  const points: Pointer[] = [];
+
+  for (let i = 0; i < 80; i += 1) {
+    x += vx * dt;
+    y += vy * dt;
+
+    if (x - radius < 0 || x + radius > canvasSize.width) {
+      vx *= -1;
+      x = clamp(x, radius, canvasSize.width - radius);
+    }
+    if (y - radius < 0) {
+      vy *= -1;
+      y = radius;
+    }
+
+    points.push({ x, y });
+    if (y - radius > canvasSize.height) break;
+  }
+
+  return points;
 }
 
 function clamp(val: number, min: number, max: number) {
