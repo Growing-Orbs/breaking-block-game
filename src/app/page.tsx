@@ -13,6 +13,7 @@ import {
   Block,
   GameStatus,
   ProjectileInstance,
+  ProjectileKind,
   ProjectileSpec,
 } from '@/app/queueBreakerTypes';
 
@@ -46,7 +47,7 @@ export default function Home() {
   useEffect(() => {
     blocksRef.current = blocks;
     renderFrame();
-  }, [blocks, queue, status, aim, message, trajectory, originX, isDragging]);
+  }, [blocks, queue, status, aim, message, originX, isDragging, trajectory]);
 
   useEffect(() => {
     saveStage(stage);
@@ -118,12 +119,14 @@ export default function Home() {
     setStatus('firing');
     setMessage('');
     const speed = 0.35; // px per ms
+    const radius = 8;
+    const originY = canvasSize.height - 20;
     projectileRef.current = {
       x: originX,
-      y: canvasSize.height - 24,
+      y: originY - radius - 1, // sit just above ground line
       vx: Math.cos(aim) * speed,
       vy: Math.sin(aim) * speed,
-      radius: 8,
+      radius,
       damage: proj.damage,
       bounces: 0,
       ttlMs: 7000,
@@ -238,15 +241,16 @@ export default function Home() {
     }
 
     const originY = canvasSize.height - 20;
-    if (isDragging) {
-      ctx.strokeStyle = '#8aa1ff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(originX, originY);
-      ctx.lineTo(originX + Math.cos(aim) * 60, originY + Math.sin(aim) * 60);
-      ctx.stroke();
+    // Ground line at launch height
+    ctx.strokeStyle = '#243060';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(0, originY);
+    ctx.lineTo(canvasSize.width, originY);
+    ctx.stroke();
 
-      ctx.fillStyle = '#cfd8ff';
+    if (isDragging) {
+      ctx.fillStyle = '#8aa1ff';
       trajectory.forEach((point, idx) => {
         const alpha = 1 - idx / trajectory.length;
         ctx.globalAlpha = clamp(alpha, 0.2, 1);
@@ -255,43 +259,55 @@ export default function Home() {
         ctx.fill();
       });
       ctx.globalAlpha = 1;
-
-      // 발사 원점 표시
-      ctx.fillStyle = '#6b7cff';
-      ctx.beginPath();
-      ctx.arc(originX, originY, 6, 0, Math.PI * 2);
-      ctx.fill();
     }
+
+    // 발사 원점 표시
+    ctx.fillStyle = '#6b7cff';
+    ctx.beginPath();
+    ctx.arc(originX, originY, 6, 0, Math.PI * 2);
+    ctx.fill();
   };
 
   return (
     <Page className="bg-[#0b1021] text-white">
       <Page.Header className="bg-[#0b1021] text-white">
-        <div className="flex items-center justify-between">
-          <div className="text-sm uppercase tracking-[0.12em] text-[#8aa1ff]">
-            World Chain Mini App
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-end text-xs font-semibold text-[#f2c94c]">
+            Next Orb!
           </div>
-          <div className="rounded-full border border-[#243060] px-3 py-1 text-xs text-[#cfd8ff]">
-            Queue Breaker
-          </div>
-        </div>
-        <div className="mt-3 flex items-end justify-between">
-          <div>
-            <div className="text-xs text-[#8aa1ff]">Stage</div>
-            <div className="text-2xl font-semibold leading-tight">Stage {stage}</div>
-          </div>
-          <div className="text-right text-xs text-[#8aa1ff]">
-            Use the FIFO queue; swap before firing.
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <div className="text-xs text-[#8aa1ff]">Stage</div>
+              <div className="text-2xl font-semibold leading-tight">Stage {stage}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              {queue[0] ? (
+                <div className="flex items-center gap-2 rounded-xl border border-[#1f294b] bg-[#0f1428] px-3 py-2 shadow-sm">
+                  <div
+                    className="h-8 w-8 rounded-full border border-[#cfd8ff]/40"
+                    style={{ background: orbPaint(queue[0].kind) }}
+                  />
+                  <div className="text-[11px] leading-tight text-[#cfd8ff]">
+                    <div className="uppercase tracking-wide text-[#8aa1ff]">
+                      {queue[0].kind}
+                    </div>
+                    <div className="text-[#f2c94c]">DMG {queue[0].damage}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-[#1f294b] bg-[#0f1428] px-3 py-2 text-[11px] text-[#cfd8ff]">
+                  No orbs remaining
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {message && <div className="mt-2 text-sm text-[#f2c94c]">{message}</div>}
+        <div className="mt-4 h-[1.44px] w-full bg-[#1f294b]" />
       </Page.Header>
 
       <Page.Main className="flex flex-col gap-4">
-        <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-2xl border border-[#1c2340] bg-gradient-to-b from-[#141c37] to-[#0b1021] shadow-lg">
-          <div className="absolute left-3 top-3 rounded-full bg-[#1f294b] px-3 py-1 text-xs text-[#cfd8ff]">
-            Canvas
-          </div>
+        <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-2xl bg-gradient-to-b from-[#141c37] to-[#0b1021] shadow-lg">
           <div className="flex h-[480px] items-center justify-center">
             <canvas
               ref={canvasRef}
@@ -302,7 +318,7 @@ export default function Home() {
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerLeave}
               onPointerCancel={handlePointerLeave}
-              className="h-[440px] w-[340px] rounded-lg border border-[#1f294b] bg-[#0f1428]"
+              className="h-[440px] w-[340px] rounded-lg bg-[#0f1428]"
             />
           </div>
         </div>
@@ -363,7 +379,7 @@ function simulateTrajectory(angle: number, startX: number): Pointer[] {
   const radius = 8;
   const dt = 16; // ms per step for preview sampling
   let x = startX;
-  let y = canvasSize.height - 24;
+  let y = canvasSize.height - 20 - radius - 1;
   let vx = Math.cos(angle) * speed;
   let vy = Math.sin(angle) * speed;
   const points: Pointer[] = [];
@@ -372,14 +388,8 @@ function simulateTrajectory(angle: number, startX: number): Pointer[] {
     x += vx * dt;
     y += vy * dt;
 
-    if (x - radius < 0 || x + radius > canvasSize.width) {
-      vx *= -1;
-      x = clamp(x, radius, canvasSize.width - radius);
-    }
-    if (y - radius < 0) {
-      vy *= -1;
-      y = radius;
-    }
+    if (x - radius < 0 || x + radius > canvasSize.width) break;
+    if (y - radius < 0) break;
 
     points.push({ x, y });
     if (y - radius > canvasSize.height) break;
@@ -390,6 +400,18 @@ function simulateTrajectory(angle: number, startX: number): Pointer[] {
 
 function clamp(val: number, min: number, max: number) {
   return Math.min(Math.max(val, min), max);
+}
+
+function orbPaint(kind: ProjectileKind): string {
+  switch (kind) {
+    case 'bomb':
+      return 'radial-gradient(circle at 30% 30%, #ffefa0, #f36c6c 55%, #b53d3d)';
+    case 'splitter':
+      return 'radial-gradient(circle at 30% 30%, #b8f3ff, #6b7cff 55%, #2b3a7a)';
+    case 'normal':
+    default:
+      return 'radial-gradient(circle at 30% 30%, #f7fbff, #8aa1ff 55%, #3a4b99)';
+  }
 }
 
 function drawBossBar(ctx: CanvasRenderingContext2D, boss: Block, ratio: number) {
